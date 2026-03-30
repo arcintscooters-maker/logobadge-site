@@ -186,28 +186,39 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  // Handle auth callback
+  // Handle auth callback - redirect back to app in admin
   if (req.url.startsWith('/auth/callback')) {
-    res.writeHead(200, { 'Content-Type': 'text/html' });
-    res.end('<h1>App installed successfully!</h1><p>You can close this tab and go to your Theme Editor to add the Google Review Badge block.</p>');
+    const cbParams = new URL(req.url, 'http://localhost');
+    const shop = cbParams.searchParams.get('shop');
+    if (shop) {
+      res.writeHead(302, { 'Location': `https://${shop}/admin/apps/c8868bcbaffacc769e94c04755c94cc7` });
+      res.end();
+    } else {
+      res.writeHead(200, { 'Content-Type': 'text/html' });
+      res.end('<html><body><script>window.location.href="/setup";</script></body></html>');
+    }
     return;
+  }
+
+  // Handle Shopify OAuth install redirect
+  if (req.url.startsWith('/api/auth') || req.url.includes('?shop=') && filePath === '/api/auth') {
+    const authParams = new URL(req.url, 'http://localhost');
+    const shop = authParams.searchParams.get('shop');
+    if (shop) {
+      // For non-embedded apps, just serve the setup page
+      res.writeHead(200, { 'Content-Type': 'text/html' });
+      const setupHtml = require('fs').readFileSync(require('path').join(__dirname, 'setup.html'), 'utf8');
+      res.end(setupHtml);
+      return;
+    }
   }
 
   // Serve static files
   let filePath = req.url.split('?')[0];
 
-  // If opened from Shopify admin (has shop param), redirect to setup page outside iframe
+  // If opened from Shopify admin, serve setup page directly (works inside iframe)
   if (filePath === '/' && (req.url.includes('shop=') || req.url.includes('hmac=') || req.url.includes('host='))) {
-    // Break out of Shopify iframe and show setup page
-    res.writeHead(200, { 'Content-Type': 'text/html', 'Content-Security-Policy': "frame-ancestors 'none'" });
-    res.end(`<!DOCTYPE html><html><head><script>
-      if (window.top !== window.self) {
-        window.top.location.href = window.location.origin + '/setup';
-      } else {
-        window.location.href = '/setup';
-      }
-    </script></head><body>Redirecting to setup guide...</body></html>`);
-    return;
+    filePath = '/setup.html';
   } else if (filePath === '/') {
     filePath = '/index.html';
   }
