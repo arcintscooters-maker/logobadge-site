@@ -196,9 +196,18 @@ const server = http.createServer(async (req, res) => {
   // Serve static files
   let filePath = req.url.split('?')[0];
 
-  // If opened from Shopify admin (has shop param or embedded), show setup page
+  // If opened from Shopify admin (has shop param), redirect to setup page outside iframe
   if (filePath === '/' && (req.url.includes('shop=') || req.url.includes('hmac=') || req.url.includes('host='))) {
-    filePath = '/setup.html';
+    // Break out of Shopify iframe and show setup page
+    res.writeHead(200, { 'Content-Type': 'text/html', 'Content-Security-Policy': "frame-ancestors 'none'" });
+    res.end(`<!DOCTYPE html><html><head><script>
+      if (window.top !== window.self) {
+        window.top.location.href = window.location.origin + '/setup';
+      } else {
+        window.location.href = '/setup';
+      }
+    </script></head><body>Redirecting to setup guide...</body></html>`);
+    return;
   } else if (filePath === '/') {
     filePath = '/index.html';
   }
