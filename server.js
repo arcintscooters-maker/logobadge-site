@@ -1,8 +1,10 @@
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 
 const PORT = process.env.PORT || 3000;
+const SHOPIFY_API_SECRET = process.env.SHOPIFY_API_SECRET || '';
 
 const MIME = {
   '.html': 'text/html',
@@ -12,8 +14,58 @@ const MIME = {
   '.ico': 'image/x-icon'
 };
 
-const server = http.createServer((req, res) => {
-  let filePath = req.url === '/' ? '/index.html' : req.url;
+function verifyHmac(body, hmacHeader) {
+  if (!SHOPIFY_API_SECRET) return true; // Skip if no secret configured
+  const hash = crypto.createHmac('sha256', SHOPIFY_API_SECRET).update(body).digest('base64');
+  return crypto.timingSafeEqual(Buffer.from(hash), Buffer.from(hmacHeader || ''));
+}
+
+function readBody(req) {
+  return new Promise((resolve) => {
+    let data = '';
+    req.on('data', chunk => data += chunk);
+    req.on('end', () => resolve(data));
+  });
+}
+
+const server = http.createServer(async (req, res) => {
+  // Handle webhook endpoints
+  if (req.method === 'POST' && req.url.startsWith('/webhooks/')) {
+    const body = await readBody(req);
+    const hmac = req.headers['x-shopify-hmac-sha256'];
+
+    // Verify HMAC signature
+    try {
+      if (SHOPIFY_API_SECRET && !verifyHmac(body, hmac)) {
+        console.log('Webhook HMAC verification failed:', req.url);
+        res.writeHead(401); res.end('Unauthorized');
+        return;
+      }
+    } catch (e) {
+      console.log('HMAC verification error:', e.message);
+      res.writeHead(401); res.end('Unauthorized');
+      return;
+    }
+
+    console.log('Webhook received:', req.url);
+
+    // Respond 200 OK to all compliance webhooks
+    // Our app doesn't store customer data so nothing to process
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ success: true }));
+    return;
+  }
+
+  // Handle auth callback
+  if (req.url.startsWith('/auth/callback')) {
+    res.writeHead(200, { 'Content-Type': 'text/html' });
+    res.end('<h1>App installed successfully!</h1><p>You can close this tab and go to your Theme Editor to add the Google Review Badge block.</p>');
+    return;
+  }
+
+  // Serve static files
+  let filePath = req.url.split('?')[0];
+  if (filePath === '/') filePath = '/index.html';
   if (!path.extname(filePath)) filePath += '.html';
 
   const fullPath = path.join(__dirname, filePath);
