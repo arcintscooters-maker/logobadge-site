@@ -66,7 +66,13 @@ const server = http.createServer(async (req, res) => {
 
   // Serve static files
   let filePath = req.url.split('?')[0];
-  if (filePath === '/') filePath = '/index.html';
+
+  // If opened from Shopify admin (has shop param or embedded), show setup page
+  if (filePath === '/' && (req.url.includes('shop=') || req.url.includes('hmac=') || req.url.includes('host='))) {
+    filePath = '/setup.html';
+  } else if (filePath === '/') {
+    filePath = '/index.html';
+  }
   if (!path.extname(filePath)) filePath += '.html';
 
   const fullPath = path.join(__dirname, filePath);
