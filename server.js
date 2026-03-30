@@ -5,6 +5,7 @@ const crypto = require('crypto');
 
 const PORT = process.env.PORT || 3000;
 const SHOPIFY_API_SECRET = process.env.SHOPIFY_API_SECRET || '';
+const GOOGLE_API_KEY = process.env.GOOGLE_PLACES_API_KEY || '';
 const placeCache = {}; // In-memory cache for Google Places data (24h TTL)
 
 const MIME = {
