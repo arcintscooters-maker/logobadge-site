@@ -61,16 +61,29 @@ const server = http.createServer(async (req, res) => {
   // Google Places API proxy — fetches rating & review count
   if (req.url.startsWith('/api/place')) {
     const urlParams = new URL(req.url, 'http://localhost');
-    const placeId = urlParams.searchParams.get('id');
+    let placeId = urlParams.searchParams.get('id');
+    const mapsUrl = urlParams.searchParams.get('url');
 
-    if (!placeId) {
+    if (!placeId && !mapsUrl) {
       res.writeHead(400, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
-      res.end(JSON.stringify({ error: 'Missing place ID' }));
+      res.end(JSON.stringify({ error: 'Missing place ID or Maps URL' }));
       return;
     }
 
-    // Check cache first (24 hour cache)
-    const cacheKey = placeId;
+    // Extract Place ID from Google Maps URL if provided
+    if (!placeId && mapsUrl) {
+      // Try various Google Maps URL formats
+      const cidMatch = mapsUrl.match(/cid=(\d+)/);
+      const placeMatch = mapsUrl.match(/place_id[=:]([A-Za-z0-9_-]+)/);
+      const dataMatch = mapsUrl.match(/!1s(0x[0-9a-f]+:[0-9a-fx]+)/);
+      const hexMatch = mapsUrl.match(/(ChIJ[A-Za-z0-9_-]+)/);
+
+      if (placeMatch) placeId = placeMatch[1];
+      else if (hexMatch) placeId = hexMatch[1];
+    }
+
+    // If still no Place ID, try Google's Find Place API using the URL
+    const cacheKey = placeId || mapsUrl;
     const cached = placeCache[cacheKey];
     if (cached && Date.now() - cached.ts < 86400000) {
       res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
@@ -83,6 +96,25 @@ const server = http.createServer(async (req, res) => {
       res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
       res.end(JSON.stringify({ error: 'No API key configured', rating: null }));
       return;
+    }
+
+    // If no Place ID extracted, use Find Place API to look it up from the URL
+    if (!placeId && mapsUrl) {
+      const findUrl = `https://maps.googleapis.com/maps/api/place/findplacefromtext/json?input=${encodeURIComponent(mapsUrl)}&inputtype=textquery&fields=place_id&key=${apiKey}`;
+      const findResult = await new Promise((resolve) => {
+        require('https').get(findUrl, (r) => {
+          let d = '';
+          r.on('data', c => d += c);
+          r.on('end', () => { try { resolve(JSON.parse(d)); } catch { resolve(null); } });
+        }).on('error', () => resolve(null));
+      });
+      if (findResult?.candidates?.[0]?.place_id) {
+        placeId = findResult.candidates[0].place_id;
+      } else {
+        res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+        res.end(JSON.stringify({ error: 'Could not find place', rating: null }));
+        return;
+      }
     }
 
     const apiUrl = `https://maps.googleapis.com/maps/api/place/details/json?place_id=${encodeURIComponent(placeId)}&fields=rating,user_ratings_total,name&key=${apiKey}`;
