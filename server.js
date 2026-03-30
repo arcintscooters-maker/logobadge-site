@@ -71,16 +71,41 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
-    // Extract Place ID from Google Maps URL if provided
+    // Extract Place ID or business name from various URL formats
     if (!placeId && mapsUrl) {
-      // Try various Google Maps URL formats
-      const cidMatch = mapsUrl.match(/cid=(\d+)/);
       const placeMatch = mapsUrl.match(/place_id[=:]([A-Za-z0-9_-]+)/);
-      const dataMatch = mapsUrl.match(/!1s(0x[0-9a-f]+:[0-9a-fx]+)/);
       const hexMatch = mapsUrl.match(/(ChIJ[A-Za-z0-9_-]+)/);
+      const kgmidMatch = mapsUrl.match(/kgmid=([^&]+)/);
+      const qMatch = mapsUrl.match(/[?&]q=([^&]+)/);
 
       if (placeMatch) placeId = placeMatch[1];
       else if (hexMatch) placeId = hexMatch[1];
+      // For share.google and other redirect URLs, follow the redirect first
+      else if (mapsUrl.includes('share.google') || mapsUrl.includes('goo.gl') || mapsUrl.includes('maps.app')) {
+        try {
+          const redirectUrl = await new Promise((resolve) => {
+            const mod = mapsUrl.startsWith('https') ? require('https') : require('http');
+            mod.get(mapsUrl, { headers: { 'User-Agent': 'Mozilla/5.0' } }, (r) => {
+              if (r.headers.location) resolve(r.headers.location);
+              else { let d=''; r.on('data',c=>d+=c); r.on('end',()=>{ const m=d.match(/(ChIJ[A-Za-z0-9_-]+)/)||d.match(/[?&]q=([^&"]+)/); resolve(m?m[0]:''); }); }
+            }).on('error', () => resolve(''));
+          });
+          if (redirectUrl) {
+            const rHex = redirectUrl.match(/(ChIJ[A-Za-z0-9_-]+)/);
+            const rQ = redirectUrl.match(/[?&]q=([^&]+)/);
+            if (rHex) placeId = rHex[1];
+            else if (rQ) {
+              // Use business name to find Place ID
+              const searchName = decodeURIComponent(rQ[1].replace(/\+/g, ' '));
+              const findUrl2 = 'https://maps.googleapis.com/maps/api/place/findplacefromtext/json?input=' + encodeURIComponent(searchName) + '&inputtype=textquery&fields=place_id&key=' + GOOGLE_API_KEY;
+              const fr = await new Promise((resolve) => {
+                require('https').get(findUrl2, (r) => { let d=''; r.on('data',c=>d+=c); r.on('end',()=>{ try{resolve(JSON.parse(d))}catch{resolve(null)} }); }).on('error',()=>resolve(null));
+              });
+              if (fr?.candidates?.[0]?.place_id) placeId = fr.candidates[0].place_id;
+            }
+          }
+        } catch(e) {}
+      }
     }
 
     // If still no Place ID, try Google's Find Place API using the URL
@@ -92,7 +117,7 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
-    const apiKey = process.env.GOOGLE_PLACES_API_KEY;
+    const apiKey = GOOGLE_API_KEY;
     if (!apiKey) {
       res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
       res.end(JSON.stringify({ error: 'No API key configured', rating: null }));
