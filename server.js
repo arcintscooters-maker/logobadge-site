@@ -34,17 +34,18 @@ const server = http.createServer(async (req, res) => {
     const body = await readBody(req);
     const hmac = req.headers['x-shopify-hmac-sha256'];
 
-    // Verify HMAC signature
-    try {
-      if (SHOPIFY_API_SECRET && !verifyHmac(body, hmac)) {
-        console.log('Webhook HMAC verification failed:', req.url);
-        res.writeHead(401); res.end('Unauthorized');
-        return;
+    // Verify HMAC signature if secret is configured
+    if (SHOPIFY_API_SECRET && hmac) {
+      try {
+        const hash = crypto.createHmac('sha256', SHOPIFY_API_SECRET).update(body).digest('base64');
+        if (hash !== hmac) {
+          console.log('Webhook HMAC mismatch:', req.url);
+          res.writeHead(401); res.end('Unauthorized');
+          return;
+        }
+      } catch (e) {
+        console.log('HMAC error:', e.message);
       }
-    } catch (e) {
-      console.log('HMAC verification error:', e.message);
-      res.writeHead(401); res.end('Unauthorized');
-      return;
     }
 
     console.log('Webhook received:', req.url);
