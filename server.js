@@ -83,12 +83,20 @@ const server = http.createServer(async (req, res) => {
       // For share.google and other redirect URLs, follow the redirect first
       else if (mapsUrl.includes('share.google') || mapsUrl.includes('goo.gl') || mapsUrl.includes('maps.app')) {
         try {
+          // Follow redirects up to 5 levels to get the final URL
           const redirectUrl = await new Promise((resolve) => {
-            const mod = mapsUrl.startsWith('https') ? require('https') : require('http');
-            mod.get(mapsUrl, { headers: { 'User-Agent': 'Mozilla/5.0' } }, (r) => {
-              if (r.headers.location) resolve(r.headers.location);
-              else { let d=''; r.on('data',c=>d+=c); r.on('end',()=>{ const m=d.match(/(ChIJ[A-Za-z0-9_-]+)/)||d.match(/[?&]q=([^&"]+)/); resolve(m?m[0]:''); }); }
-            }).on('error', () => resolve(''));
+            function follow(url, depth) {
+              if (depth > 5) { resolve(url); return; }
+              const mod = url.startsWith('https') ? require('https') : require('http');
+              mod.get(url, { headers: { 'User-Agent': 'Mozilla/5.0' } }, (r) => {
+                if (r.statusCode >= 300 && r.statusCode < 400 && r.headers.location) {
+                  follow(r.headers.location, depth + 1);
+                } else {
+                  let d=''; r.on('data',c=>d+=c); r.on('end',()=>resolve(url));
+                }
+              }).on('error', () => resolve(''));
+            }
+            follow(mapsUrl, 0);
           });
           if (redirectUrl) {
             const rHex = redirectUrl.match(/(ChIJ[A-Za-z0-9_-]+)/);
