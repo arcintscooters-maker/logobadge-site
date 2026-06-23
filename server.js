@@ -8,6 +8,29 @@ const SHOPIFY_API_SECRET = process.env.SHOPIFY_API_SECRET || '';
 const GOOGLE_API_KEY = process.env.GOOGLE_PLACES_API_KEY || '';
 const placeCache = {}; // In-memory cache for Google Places data (24h TTL)
 
+// --- Inlinex: keep the storefront's shop review metafield in sync with the live Google rating ---
+// So Inlinex's LocalBusiness JSON-LD (SEO rich-snippet stars) reads a live value instead of a stale
+// hardcode. Fires ONLY for the Inlinex place, only on a fresh Google fetch (≈ every 24h / on restart),
+// and never blocks the /api/place response. Needs env INLINEX_ADMIN_TOKEN (write_metafields scope).
+const INLINEX_PLACE_ID = 'ChIJ0aYxeAoZ2jERw33McA4nDfE';
+const INLINEX_SHOP = 'inline-skate.myshopify.com';
+const INLINEX_SHOP_GID = 'gid://shopify/Shop/4392773';
+function syncInlinexRating(rating, total) {
+  const token = process.env.INLINEX_ADMIN_TOKEN;
+  if (!token || rating == null) return;
+  const variables = { mf: [
+    { ownerId: INLINEX_SHOP_GID, namespace: 'reviews', key: 'rating', type: 'single_line_text_field', value: String(rating) },
+    { ownerId: INLINEX_SHOP_GID, namespace: 'reviews', key: 'review_count', type: 'single_line_text_field', value: String(total == null ? '' : total) }
+  ]};
+  const payload = JSON.stringify({ query: 'mutation($mf:[MetafieldsSetInput!]!){ metafieldsSet(metafields:$mf){ userErrors{ field message } } }', variables });
+  const r = require('https').request(`https://${INLINEX_SHOP}/admin/api/2024-10/graphql.json`, {
+    method: 'POST',
+    headers: { 'X-Shopify-Access-Token': token, 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload) }
+  }, (resp) => { let d = ''; resp.on('data', c => d += c); resp.on('end', () => { try { const j = JSON.parse(d); const e = j && j.data && j.data.metafieldsSet && j.data.metafieldsSet.userErrors; if (e && e.length) console.log('Inlinex metafield sync errors:', e); else console.log('Inlinex rating synced:', rating, total); } catch (_) {} }); });
+  r.on('error', (e) => console.log('Inlinex metafield sync failed:', e.message));
+  r.write(payload); r.end();
+}
+
 const MIME = {
   '.html': 'text/html',
   '.css': 'text/css',
@@ -165,6 +188,7 @@ const server = http.createServer(async (req, res) => {
             name: result.result?.name || null
           };
           placeCache[cacheKey] = { data: placeData, ts: Date.now() };
+          if (placeId === INLINEX_PLACE_ID) syncInlinexRating(placeData.rating, placeData.total_reviews);
           res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
           res.end(JSON.stringify(placeData));
         } catch (e) {
